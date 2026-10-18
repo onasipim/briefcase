@@ -423,6 +423,14 @@ class GradleRunCommand(GradleMixin, RunCommand):
             required=False,
         )
         parser.add_argument(
+            "--grant-permission",
+            metavar="PERMISSION",
+            action="append",
+            dest="grant_permissions",
+            help="Grant specified permission before launching the app",
+            required=False,
+        )
+        parser.add_argument(
             "--revoke-permission",
             metavar="PERMISSION",
             action="append",
@@ -467,6 +475,7 @@ class GradleRunCommand(GradleMixin, RunCommand):
         device_or_avd: str | None = None,
         extra_emulator_args=None,
         shutdown_on_exit=False,
+        grant_permissions: list[str] | None = None,
         revoke_permissions: list[str] | None = None,
         forward_ports: list[int] | None = None,
         reverse_ports: list[int] | None = None,
@@ -481,11 +490,22 @@ class GradleRunCommand(GradleMixin, RunCommand):
             a default "beePhone" device will be selected (and created if necessary).
         :param extra_emulator_args: Any additional arguments to pass to the emulator.
         :param shutdown_on_exit: Should the emulator be shut down on exit?
+        :param grant_permissions: A list of permissions to grant before launching
+            the app.
         :param revoke_permissions: A list of permissions to revoke before launching
             the app.
         :param forward_ports: A list of ports to forward for the app.
         :param reverse_ports: A list of ports to reversed for the app.
         """
+        overlapping_permissions = set(grant_permissions or []).intersection(
+            revoke_permissions or []
+        )
+        if overlapping_permissions:
+            raise BriefcaseCommandError(
+                "Cannot grant and revoke the same permission: "
+                + ", ".join(sorted(overlapping_permissions))
+            )
+
         device, name, avd = self.tools.android_sdk.select_target_device(device_or_avd)
 
         # If there's no device ID, that means the emulator isn't running.
@@ -532,6 +552,15 @@ class GradleRunCommand(GradleMixin, RunCommand):
             # Install the latest APK file onto the device.
             with self.console.wait_bar("Installing new app version..."):
                 adb.install_apk(self.binary_path(app), package)
+
+            if grant_permissions:
+                with self.console.wait_bar("Granting app permissions..."):
+                    for permission in grant_permissions:
+                        self.console.info(
+                            f"Granting permission: {permission}",
+                            prefix=app.app_name,
+                        )
+                        adb.grant_permission(package, permission)
 
             if revoke_permissions:
                 # Revoke specified app permissions to ensure a reproducible

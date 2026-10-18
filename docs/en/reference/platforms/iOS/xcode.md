@@ -95,6 +95,14 @@ The following options can be provided at the command line when producing iOS pro
 
 The device simulator to target. Can be either a UDID, a device name (e.g., `"iPhone 11"`), a device name and OS version (`"iPhone 11::iOS 13.3"`), or `auto`. `auto` is the default behavior; Briefcase will automatically select an "entry level" iPhone simulator (e.g., an iPhone SE, or iPhone 16e) on the most recent available iOS version. To see the full list of available simulators and select from that list, provide `-d`/`--device` with no value.
 
+#### `--grant-permission=<permission>`
+
+Grant a simulator privacy permission after installing the app and before launching it. This option also applies when running with `--test`.
+
+Use a native service name accepted by `xcrun simctl privacy`, such as `--grant-permission=calendar`. Run `xcrun simctl help privacy` to see the services supported by your installed Xcode version. The app must include any usage descriptions required by the service in its `Info.plist`.
+
+You may specify multiple `--grant-permission` arguments; each one specifies one service. Grants are applied to the selected simulator in the order specified. If a grant fails, the app is not launched.
+
 ## Application configuration
 
 The following options can be added to the `tool.briefcase.app.<appname>.iOS.app` section of your `pyproject.toml` file.

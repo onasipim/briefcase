@@ -160,6 +160,14 @@ You may specify multiple `--Xemulator` arguments; each one specifies a single ar
 
 Instruct Briefcase to shut down the emulator when the run finishes. This is especially useful if you are running in headless mode, as the emulator will continue to run in the background, but there will be no visual manifestation that it is running. It may also be useful as a cleanup mechanism when running in a CI configuration.
 
+#### `--grant-permission=<permission>`
+
+Grant a runtime permission after installing the app and before launching it. This option also applies when running with `--test`.
+
+Use a full Android permission name, such as `--grant-permission=android.permission.READ_CALENDAR`. The app must declare the permission in its Android manifest, and Android must allow the permission to be granted at runtime.
+
+You may specify multiple `--grant-permission` arguments; each one specifies one permission. Grants are applied before any permissions requested with `--revoke-permission` are revoked. A permission cannot be both granted and revoked in the same run. If a permission change fails, the app is not launched.
+
 #### `--revoke-permission=<permission>`
 
 Revoke a runtime permission of the running app before starting it. This is useful in tests to get a reproducible starting state when the permission handling should also be tested.
