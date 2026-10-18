@@ -1602,6 +1602,24 @@ class ADB:
                 f"Unable to force stop app {package} on {self.device}"
             ) from e
 
+    def grant_permission(self, package: str, permission: str) -> None:
+        """Grant a runtime permission for an app, specified as a package name.
+
+        :param package: The name of the Android package, e.g., com.username.myapp.
+        :param permission: The name of the Android permission to grant,
+            e.g., android.permission.READ_CALENDAR.
+        :returns: `None` on success; raises an exception on failure.
+        """
+        try:
+            self.run("shell", "pm", "grant", package, permission)
+        except subprocess.CalledProcessError as e:
+            raise BriefcaseCommandError(
+                (
+                    f"Unable to grant permission {permission} "
+                    f"for app {package} on {self.device}"
+                ),
+            ) from e
+
     def revoke_permission(self, package: str, permission: str) -> None:
         """Revoke a runtime permission for an app, specified as a package name.
 

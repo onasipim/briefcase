@@ -97,6 +97,7 @@ def test_device_option(run_command):
         "passthrough": [],
         "extra_emulator_args": None,
         "shutdown_on_exit": False,
+        "grant_permissions": None,
         "revoke_permissions": None,
         "forward_ports": None,
         "reverse_ports": None,
@@ -124,6 +125,7 @@ def test_device_selection_option(run_command):
         "passthrough": [],
         "extra_emulator_args": None,
         "shutdown_on_exit": False,
+        "grant_permissions": None,
         "revoke_permissions": None,
         "forward_ports": None,
         "reverse_ports": None,
@@ -153,6 +155,7 @@ def test_extra_emulator_args_option(run_command):
         "passthrough": [],
         "extra_emulator_args": ["-no-window", "-no-audio"],
         "shutdown_on_exit": False,
+        "grant_permissions": None,
         "revoke_permissions": None,
         "forward_ports": None,
         "reverse_ports": None,
@@ -180,6 +183,7 @@ def test_shutdown_on_exit_option(run_command):
         "passthrough": [],
         "extra_emulator_args": None,
         "shutdown_on_exit": True,
+        "grant_permissions": None,
         "revoke_permissions": None,
         "forward_ports": None,
         "reverse_ports": None,
@@ -212,6 +216,7 @@ def test_revoke_permission_option(run_command):
         "passthrough": [],
         "extra_emulator_args": None,
         "shutdown_on_exit": False,
+        "grant_permissions": None,
         "revoke_permissions": [
             "android.permission.BLUETOOTH_SCAN",
             "android.permission.BLUETOOTH_CONNECT",
@@ -244,6 +249,7 @@ def test_forward_ports_option(run_command):
         "debugger_port": 5678,
         "extra_emulator_args": None,
         "shutdown_on_exit": False,
+        "grant_permissions": None,
         "revoke_permissions": None,
         "forward_ports": [80, 81],
         "reverse_ports": None,
@@ -273,6 +279,7 @@ def test_reverse_ports_option(run_command):
         "debugger_port": 5678,
         "extra_emulator_args": None,
         "shutdown_on_exit": False,
+        "grant_permissions": None,
         "revoke_permissions": None,
         "forward_ports": None,
         "reverse_ports": [78, 79],
@@ -351,6 +358,7 @@ def test_run_existing_device(run_command, first_app_config):
         f"{first_app_config.package_name}.{first_app_config.module_name}",
     )
 
+    run_command.tools.mock_adb.grant_permission.assert_not_called()
     run_command.tools.mock_adb.revoke_permission.assert_not_called()
 
     run_command.tools.mock_adb.forward.assert_not_called()
@@ -1160,3 +1168,146 @@ def test_run_debugger(run_command, first_app_config, tmp_path, debugger):
 
     # The emulator was not killed at the end of the test
     run_command.tools.mock_adb.kill.assert_not_called()
+
+
+@pytest.mark.parametrize("test_mode", [False, True])
+def test_grant_permission_option(run_command, test_mode):
+    """Permission grants are repeatable and available in test mode."""
+    arguments = [
+        "--grant-permission=android.permission.READ_CALENDAR",
+        "--grant-permission",
+        "com.example.permission.CUSTOM",
+    ]
+    if test_mode:
+        arguments.append("--test")
+
+    options, overrides = run_command.parse_options(arguments)
+
+    assert options["grant_permissions"] == [
+        "android.permission.READ_CALENDAR",
+        "com.example.permission.CUSTOM",
+    ]
+    assert options["revoke_permissions"] is None
+    assert options["test_mode"] is test_mode
+    assert overrides == {}
+
+
+@pytest.mark.parametrize("test_mode", [False, True])
+def test_run_grant_permission_order(run_command, first_app_config, test_mode):
+    """The selected target is installed and granted permissions before launch."""
+    first_app_config.test_mode = test_mode
+    run_command.tools.android_sdk.select_target_device = mock.MagicMock(
+        return_value=("exampleDevice", "ExampleDevice", None)
+    )
+    actions = mock.MagicMock()
+    actions.attach_mock(
+        run_command.tools.android_sdk.select_target_device,
+        "select_target",
+    )
+    actions.attach_mock(run_command.tools.android_sdk.adb, "get_adb")
+    actions.attach_mock(run_command.tools.mock_adb, "adb")
+    package = f"{first_app_config.package_name}.{first_app_config.module_name}"
+
+    run_command.run_app(
+        first_app_config,
+        passthrough=["--example"],
+        device_or_avd="exampleDevice",
+        grant_permissions=[
+            "android.permission.READ_CALENDAR",
+            "android.permission.WRITE_CALENDAR",
+        ],
+        revoke_permissions=["android.permission.CAMERA"],
+    )
+
+    assert actions.mock_calls[:9] == [
+        mock.call.select_target("exampleDevice"),
+        mock.call.get_adb(device="exampleDevice"),
+        mock.call.adb.force_stop_app(package),
+        mock.call.adb.install_apk(run_command.binary_path(first_app_config), package),
+        mock.call.adb.grant_permission(package, "android.permission.READ_CALENDAR"),
+        mock.call.adb.grant_permission(package, "android.permission.WRITE_CALENDAR"),
+        mock.call.adb.revoke_permission(package, "android.permission.CAMERA"),
+        mock.call.adb.datetime(),
+        mock.call.adb.start_app(
+            package,
+            "org.beeware.android.MainActivity",
+            ["--example"],
+            {},
+        ),
+    ]
+
+
+def test_run_overlapping_permissions(run_command, first_app_config):
+    """A permission cannot be granted and revoked in the same run."""
+    run_command.tools.android_sdk.select_target_device = mock.MagicMock()
+
+    with pytest.raises(
+        BriefcaseCommandError,
+        match=(
+            r"Cannot grant and revoke the same permission: "
+            r"android\.permission\.CAMERA"
+        ),
+    ):
+        run_command.run_app(
+            first_app_config,
+            passthrough=[],
+            grant_permissions=[
+                "android.permission.READ_CALENDAR",
+                "android.permission.CAMERA",
+            ],
+            revoke_permissions=["android.permission.CAMERA"],
+        )
+
+    run_command.tools.android_sdk.select_target_device.assert_not_called()
+    run_command.tools.android_sdk.adb.assert_not_called()
+
+
+@pytest.mark.parametrize("test_mode", [False, True])
+@pytest.mark.parametrize(
+    "failed_action",
+    ["install_apk", "grant_permission", "revoke_permission"],
+)
+def test_run_permission_failure(
+    run_command,
+    first_app_config,
+    test_mode,
+    failed_action,
+):
+    """Installation and permission failures abort launch and preserve cleanup."""
+    first_app_config.test_mode = test_mode
+    run_command.tools.android_sdk.select_target_device = mock.MagicMock(
+        return_value=("exampleDevice", "ExampleDevice", None)
+    )
+    adb = run_command.tools.mock_adb
+    failure = BriefcaseCommandError("Permission setup failed")
+    getattr(adb, failed_action).side_effect = failure
+
+    with pytest.raises(BriefcaseCommandError, match="Permission setup failed"):
+        run_command.run_app(
+            first_app_config,
+            passthrough=[],
+            grant_permissions=[
+                "android.permission.READ_CALENDAR",
+                "android.permission.WRITE_CALENDAR",
+            ],
+            revoke_permissions=["android.permission.CAMERA"],
+            shutdown_on_exit=True,
+        )
+
+    adb.start_app.assert_not_called()
+    adb.kill.assert_called_once_with()
+    if failed_action == "install_apk":
+        adb.grant_permission.assert_not_called()
+        adb.revoke_permission.assert_not_called()
+    elif failed_action == "grant_permission":
+        adb.grant_permission.assert_called_once_with(
+            f"{first_app_config.package_name}.{first_app_config.module_name}",
+            "android.permission.READ_CALENDAR",
+        )
+        adb.revoke_permission.assert_not_called()
+    else:
+        assert adb.grant_permission.call_count == 2
+        adb.revoke_permission.assert_called_once_with(
+            f"{first_app_config.package_name}.{first_app_config.module_name}",
+            "android.permission.CAMERA",
+        )

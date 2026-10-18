@@ -5,6 +5,7 @@ import plistlib
 import re
 import subprocess
 import time
+from argparse import ArgumentParser
 from collections.abc import Collection
 from pathlib import Path
 from typing import Literal
@@ -594,6 +595,19 @@ class iOSXcodeRunCommand(iOSXcodeMixin, RunCommand):
         # This is abstracted to enable testing without patching.
         self.get_device_state = get_device_state
 
+    def add_options(self, parser: ArgumentParser) -> None:
+        super().add_options(parser)
+        parser.add_argument(
+            "--grant-permission",
+            action="append",
+            dest="grant_permissions",
+            metavar="PERMISSION",
+            help=(
+                "Privacy service to grant before launching the app. "
+                "May be specified multiple times."
+            ),
+        )
+
     def debugger_app_packages_path_mapping(
         self,
         app: FinalizedAppConfig,
@@ -616,6 +630,7 @@ class iOSXcodeRunCommand(iOSXcodeMixin, RunCommand):
         *,
         passthrough: list[str],
         udid: str | None = None,
+        grant_permissions: list[str] | None = None,
         **options,
     ) -> dict | None:
         """Start the application.
@@ -626,6 +641,8 @@ class iOSXcodeRunCommand(iOSXcodeMixin, RunCommand):
             `"auto"`, a recent "SE-class" simulator on the most recent iOS
             version will be selected automatically. If `None`, the user will
             be asked to select a device at runtime.
+        :param grant_permissions: Privacy services to grant after installing the app
+            and before launching it.
         """
         try:
             udid, iOS_version, device = self.select_target_device(udid)
@@ -746,6 +763,29 @@ class iOSXcodeRunCommand(iOSXcodeMixin, RunCommand):
             raise BriefcaseCommandError(
                 f"Unable to install new version of app {app.app_name}."
             )
+
+        if grant_permissions:
+            with self.console.wait_bar("Granting permissions..."):
+                for permission in grant_permissions:
+                    try:
+                        self.tools.subprocess.run(
+                            [
+                                "xcrun",
+                                "simctl",
+                                "privacy",
+                                udid,
+                                "grant",
+                                permission,
+                                app.bundle_identifier,
+                            ],
+                            check=True,
+                        )
+                    except subprocess.CalledProcessError as e:
+                        message = (
+                            f"Unable to grant permission {permission} "
+                            f"to app {app.app_name}."
+                        )
+                        raise BriefcaseCommandError(message) from e
 
         # Start log stream for the app.
         # The following sets up a log stream filter that looks for:
