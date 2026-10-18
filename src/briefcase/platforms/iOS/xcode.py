@@ -5,7 +5,6 @@ import plistlib
 import re
 import subprocess
 import time
-from argparse import ArgumentParser
 from collections.abc import Collection
 from pathlib import Path
 from typing import Literal
@@ -595,7 +594,7 @@ class iOSXcodeRunCommand(iOSXcodeMixin, RunCommand):
         # This is abstracted to enable testing without patching.
         self.get_device_state = get_device_state
 
-    def add_options(self, parser: ArgumentParser) -> None:
+    def add_options(self, parser):
         super().add_options(parser)
         parser.add_argument(
             "--grant-permission",
@@ -778,11 +777,10 @@ class iOSXcodeRunCommand(iOSXcodeMixin, RunCommand):
                             check=True,
                         )
                     except subprocess.CalledProcessError as e:
-                        message = (
+                        raise BriefcaseCommandError(
                             f"Unable to grant permission {permission} "
                             f"to app {app.app_name}."
-                        )
-                        raise BriefcaseCommandError(message) from e
+                        ) from e
 
         # Start log stream for the app.
         # The following sets up a log stream filter that looks for:

@@ -1841,8 +1841,8 @@ def test_grant_permission_run_only(command_class, dummy_console, tmp_path, capsy
 
 
 @pytest.fixture
-def permission_processes(run_command):
-    """Configure successful installation and launch without external processes."""
+def simulator_processes(run_command):
+    """Mock a booted simulator whose uninstall and install processes succeed."""
     run_command.select_target_device = mock.MagicMock(
         return_value=("2D3503A3-6EB9-4B37-9B17-C7EFEF2FA32D", "13.2", "iPhone 11")
     )
@@ -1850,27 +1850,27 @@ def permission_processes(run_command):
     run_command.tools.subprocess.check_output.return_value = (
         "com.example.first-app: 1234\n"
     )
-    uninstall_process = mock.MagicMock(spec_set=subprocess.Popen)
-    uninstall_process.__enter__.return_value = uninstall_process
-    uninstall_process.poll.return_value = 0
-    install_process = mock.MagicMock(spec_set=subprocess.Popen)
-    install_process.__enter__.return_value = install_process
-    install_process.poll.return_value = 0
-    log_process = mock.MagicMock(spec_set=subprocess.Popen)
+    uninstall_popen, install_popen, log_stream_popen = (
+        mock.MagicMock(spec_set=subprocess.Popen) for _ in range(3)
+    )
+    for popen in (uninstall_popen, install_popen):
+        popen.__enter__.return_value = popen
+        popen.poll.return_value = 0
     run_command.tools.subprocess.Popen.side_effect = [
-        uninstall_process,
-        install_process,
-        log_process,
+        uninstall_popen,
+        install_popen,
+        log_stream_popen,
     ]
-    return uninstall_process, install_process, log_process
+    return uninstall_popen, install_popen, log_stream_popen
 
 
-@pytest.mark.usefixtures("sleep_zero", "permission_processes")
+@pytest.mark.usefixtures("sleep_zero", "simulator_processes")
 @pytest.mark.parametrize("test_mode", [False, True])
 def test_run_app_grant_permissions(run_command, first_app_config, tmp_path, test_mode):
     """The selected simulator receives grants after installation and before launch."""
     first_app_config.test_mode = test_mode
     udid = "2D3503A3-6EB9-4B37-9B17-C7EFEF2FA32D"
+    bundle_id = "com.example.first-app"
 
     state = run_command.run_app(
         first_app_config,
@@ -1881,76 +1881,61 @@ def test_run_app_grant_permissions(run_command, first_app_config, tmp_path, test
 
     run_command.select_target_device.assert_called_once_with("permission-phone")
     assert state == {"udid": udid}
-    calls = [
+    simctl_calls = [
         call
         for call in run_command.tools.subprocess.mock_calls
-        if call[0] in {"Popen", "run", "check_output"}
-        and call.args[0][:2] == ["xcrun", "simctl"]
+        if call.args and call.args[0][:2] == ["xcrun", "simctl"]
     ]
-    assert [(call[0], call.args[0][2]) for call in calls] == [
-        ("Popen", "uninstall"),
-        ("Popen", "install"),
-        ("run", "privacy"),
-        ("run", "privacy"),
-        ("Popen", "spawn"),
-        ("check_output", "launch"),
-    ]
-    assert calls[0] == mock.call.Popen(
-        ["xcrun", "simctl", "uninstall", udid, "com.example.first-app"]
-    )
-    assert calls[1] == mock.call.Popen(
-        [
-            "xcrun",
-            "simctl",
-            "install",
-            udid,
-            tmp_path
-            / "base_path/build/first-app/ios/xcode/build/"
-            / "Debug-iphonesimulator/First App.app",
-        ]
-    )
-    for call, permission in zip(calls[2:4], ["calendar", "contacts"], strict=True):
-        assert call == mock.call.run(
+    assert simctl_calls == [
+        mock.call.Popen(["xcrun", "simctl", "uninstall", udid, bundle_id]),
+        mock.call.Popen(
             [
                 "xcrun",
                 "simctl",
-                "privacy",
+                "install",
                 udid,
-                "grant",
-                permission,
-                "com.example.first-app",
-            ],
+                tmp_path
+                / "base_path/build/first-app/ios/xcode/build/"
+                / "Debug-iphonesimulator/First App.app",
+            ]
+        ),
+        mock.call.run(
+            ["xcrun", "simctl", "privacy", udid, "grant", "calendar", bundle_id],
             check=True,
-        )
-    assert calls[-1] == mock.call.check_output(
-        [
-            "xcrun",
-            "simctl",
-            "launch",
-            udid,
-            "com.example.first-app",
-            "--role",
-            "first",
-        ]
-    )
+        ),
+        mock.call.run(
+            ["xcrun", "simctl", "privacy", udid, "grant", "contacts", bundle_id],
+            check=True,
+        ),
+        mock.call.Popen(
+            mock.ANY, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1
+        ),
+        mock.call.check_output(
+            ["xcrun", "simctl", "launch", udid, bundle_id, "--role", "first"]
+        ),
+    ]
 
 
-@pytest.mark.usefixtures("sleep_zero", "permission_processes")
-@pytest.mark.parametrize("failed_permission", ["calendar", "contacts"])
+@pytest.mark.usefixtures("sleep_zero", "simulator_processes")
+@pytest.mark.parametrize(
+    ("failed_permission", "grant_calls"),
+    [("calendar", 1), ("contacts", 2)],
+)
 def test_run_app_grant_permission_failure(
     run_command,
     first_app_config,
     failed_permission,
+    grant_calls,
 ):
     """Any failed privacy grant aborts the run before log streaming or launch."""
     first_app_config.test_mode = True
     error = subprocess.CalledProcessError(1, ["xcrun", "simctl", "privacy"])
 
-    def grant_permission(command, **kwargs):
+    def grant(command, **kwargs):
         if command[5] == failed_permission:
             raise error
 
-    run_command.tools.subprocess.run.side_effect = grant_permission
+    run_command.tools.subprocess.run.side_effect = grant
 
     with pytest.raises(
         BriefcaseCommandError,
@@ -1964,9 +1949,7 @@ def test_run_app_grant_permission_failure(
 
     assert exc_info.value.__cause__ is error
     assert run_command.tools.subprocess.Popen.call_count == 2
-    assert run_command.tools.subprocess.run.call_count == (
-        1 if failed_permission == "calendar" else 2
-    )
+    assert run_command.tools.subprocess.run.call_count == grant_calls
     run_command.tools.subprocess.check_output.assert_not_called()
     run_command._stream_app_logs.assert_not_called()
 
@@ -1975,11 +1958,12 @@ def test_run_app_grant_permission_failure(
 def test_run_app_install_failure_skips_permissions(
     run_command,
     first_app_config,
-    permission_processes,
+    simulator_processes,
 ):
     """Failed installation prevents permission grants and launch."""
     first_app_config.test_mode = True
-    permission_processes[1].poll.return_value = 1
+    _, install_popen, _ = simulator_processes
+    install_popen.poll.return_value = 1
 
     with pytest.raises(BriefcaseCommandError, match="Unable to install new version"):
         run_command.run_app(

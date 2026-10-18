@@ -497,13 +497,10 @@ class GradleRunCommand(GradleMixin, RunCommand):
         :param forward_ports: A list of ports to forward for the app.
         :param reverse_ports: A list of ports to reversed for the app.
         """
-        overlapping_permissions = set(grant_permissions or []).intersection(
-            revoke_permissions or []
-        )
-        if overlapping_permissions:
+        if conflicts := set(grant_permissions or []) & set(revoke_permissions or []):
             raise BriefcaseCommandError(
                 "Cannot grant and revoke the same permission: "
-                + ", ".join(sorted(overlapping_permissions))
+                f"{', '.join(sorted(conflicts))}"
             )
 
         device, name, avd = self.tools.android_sdk.select_target_device(device_or_avd)

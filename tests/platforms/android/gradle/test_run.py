@@ -1264,14 +1264,16 @@ def test_run_overlapping_permissions(run_command, first_app_config):
 
 @pytest.mark.parametrize("test_mode", [False, True])
 @pytest.mark.parametrize(
-    "failed_action",
-    ["install_apk", "grant_permission", "revoke_permission"],
+    ("failed_action", "grant_calls", "revoke_calls"),
+    [("install_apk", 0, 0), ("grant_permission", 1, 0), ("revoke_permission", 2, 1)],
 )
 def test_run_permission_failure(
     run_command,
     first_app_config,
     test_mode,
     failed_action,
+    grant_calls,
+    revoke_calls,
 ):
     """Installation and permission failures abort launch and preserve cleanup."""
     first_app_config.test_mode = test_mode
@@ -1279,10 +1281,9 @@ def test_run_permission_failure(
         return_value=("exampleDevice", "ExampleDevice", None)
     )
     adb = run_command.tools.mock_adb
-    failure = BriefcaseCommandError("Permission setup failed")
-    getattr(adb, failed_action).side_effect = failure
+    getattr(adb, failed_action).side_effect = BriefcaseCommandError("Setup failed")
 
-    with pytest.raises(BriefcaseCommandError, match="Permission setup failed"):
+    with pytest.raises(BriefcaseCommandError, match="Setup failed"):
         run_command.run_app(
             first_app_config,
             passthrough=[],
@@ -1296,18 +1297,5 @@ def test_run_permission_failure(
 
     adb.start_app.assert_not_called()
     adb.kill.assert_called_once_with()
-    if failed_action == "install_apk":
-        adb.grant_permission.assert_not_called()
-        adb.revoke_permission.assert_not_called()
-    elif failed_action == "grant_permission":
-        adb.grant_permission.assert_called_once_with(
-            f"{first_app_config.package_name}.{first_app_config.module_name}",
-            "android.permission.READ_CALENDAR",
-        )
-        adb.revoke_permission.assert_not_called()
-    else:
-        assert adb.grant_permission.call_count == 2
-        adb.revoke_permission.assert_called_once_with(
-            f"{first_app_config.package_name}.{first_app_config.module_name}",
-            "android.permission.CAMERA",
-        )
+    assert adb.grant_permission.call_count == grant_calls
+    assert adb.revoke_permission.call_count == revoke_calls

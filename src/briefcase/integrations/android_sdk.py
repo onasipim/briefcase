@@ -1614,10 +1614,8 @@ class ADB:
             self.run("shell", "pm", "grant", package, permission)
         except subprocess.CalledProcessError as e:
             raise BriefcaseCommandError(
-                (
-                    f"Unable to grant permission {permission} "
-                    f"for app {package} on {self.device}"
-                ),
+                f"Unable to grant permission {permission} "
+                f"for app {package} on {self.device}"
             ) from e
 
     def revoke_permission(self, package: str, permission: str) -> None:
